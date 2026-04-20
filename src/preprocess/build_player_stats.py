@@ -41,6 +41,7 @@ def initialize_player_row(
         "match_id": match_id,
         "date_start": date_start,
         "player_name": player_name,
+        "cricsheet_id": None,
         "team": team,
         "opponent": opponent,
         # batting
@@ -80,17 +81,25 @@ def ensure_player(
     player_name: str | None,
     team: str | None,
     opponent: str | None,
+    registry_people: dict[str, str] | None = None,
 ) -> None:
     if not player_name:
         return
+
     if player_name not in player_rows:
-        player_rows[player_name] = initialize_player_row(
+        row = initialize_player_row(
             match_id=match_id,
             date_start=date_start,
             player_name=player_name,
             team=team,
             opponent=opponent,
         )
+        if registry_people:
+            row["cricsheet_id"] = registry_people.get(player_name)
+        player_rows[player_name] = row
+    else:
+        if registry_people and not player_rows[player_name].get("cricsheet_id"):
+            player_rows[player_name]["cricsheet_id"] = registry_people.get(player_name)
 
 
 def parse_match_player_stats(match_row: pd.Series) -> list[dict[str, Any]]:
@@ -102,6 +111,10 @@ def parse_match_player_stats(match_row: pd.Series) -> list[dict[str, Any]]:
         data = json.load(f)
 
     info = data.get("info", {})
+    registry_people = info.get("registry", {}).get("people", {})
+    if not isinstance(registry_people, dict):
+        registry_people = {}
+
     teams = info.get("teams", []) if isinstance(info.get("teams", []), list) else []
     roster_map = get_match_players(info)
     team_opponent_map = get_team_opponent_map(teams)
@@ -112,7 +125,15 @@ def parse_match_player_stats(match_row: pd.Series) -> list[dict[str, Any]]:
     for team, roster in roster_map.items():
         opponent = team_opponent_map.get(team)
         for player_name in roster:
-            ensure_player(player_rows, match_id, date_start, player_name, team, opponent)
+            ensure_player(
+                player_rows,
+                match_id,
+                date_start,
+                player_name,
+                team,
+                opponent,
+                registry_people,
+            )
 
     innings_list = data.get("innings", [])
     if not isinstance(innings_list, list):
@@ -147,9 +168,9 @@ def parse_match_player_stats(match_row: pd.Series) -> list[dict[str, Any]]:
                 non_striker = ball.get("non_striker")
                 bowler = ball.get("bowler")
 
-                ensure_player(player_rows, match_id, date_start, batter, batting_team, bowling_team)
-                ensure_player(player_rows, match_id, date_start, non_striker, batting_team, bowling_team)
-                ensure_player(player_rows, match_id, date_start, bowler, bowling_team, batting_team)
+                ensure_player(player_rows, match_id, date_start, batter, batting_team, bowling_team, registry_people)
+                ensure_player(player_rows, match_id, date_start, non_striker, batting_team, bowling_team, registry_people)
+                ensure_player(player_rows, match_id, date_start, bowler, bowling_team, batting_team, registry_people)
 
                 runs = ball.get("runs", {})
                 batter_runs = safe_int(runs.get("batter"))
@@ -199,6 +220,7 @@ def parse_match_player_stats(match_row: pd.Series) -> list[dict[str, Any]]:
                                     fielder_name,
                                     bowling_team,
                                     batting_team,
+                                    registry_people,
                                 )
 
                     if dismissed_batter:
@@ -209,6 +231,7 @@ def parse_match_player_stats(match_row: pd.Series) -> list[dict[str, Any]]:
                             dismissed_batter,
                             batting_team,
                             bowling_team,
+                            registry_people,
                         )
                         player_rows[dismissed_batter]["dismissed"] += 1
                         player_rows[dismissed_batter]["dismissed_by_bowler"] = bowler
@@ -293,6 +316,9 @@ def main() -> None:
 
     if "player_name" in player_match_stats_df.columns:
         print(f"Unique players: {player_match_stats_df['player_name'].nunique()}")
+
+    if "cricsheet_id" in player_match_stats_df.columns:
+        print(f"Rows with cricsheet_id: {player_match_stats_df['cricsheet_id'].notna().sum()}")
 
 
 if __name__ == "__main__":
